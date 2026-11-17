@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nebula Brush — flow-field painter</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #060810; }
+  canvas { display: block; cursor: crosshair; touch-action: none; }
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(0,0,0,.5) 100%);
+  }
+  #hint {
+    position: fixed; left: 20px; bottom: 18px; pointer-events: none;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: rgba(232,236,244,.55); letter-spacing: .04em;
+    transition: opacity 1.2s ease;
+  }
+  #hint.gone { opacity: 0; }
+
+  .panel {
+    position: fixed; top: 20px; right: 20px; width: 252px;
+    background: rgba(13,16,28,.74); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.09); border-radius: 16px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.45);
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #e8ecf4; user-select: none;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 16px 11px;
+  }
+  .panel-title { font-size: 12px; font-weight: 700; letter-spacing: .18em; color: #aab4c8; }
+  .panel-title em { font-style: normal; color: #7ee0ff; }
+  #collapse {
+    border: none; background: transparent; color: #8b95a9; cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 4px 6px; border-radius: 6px;
+  }
+  #collapse:hover { color: #fff; background: rgba(255,255,255,.07); }
+  .panel-body { padding: 0 16px 15px; }
+  .panel.collapsed .panel-body { display: none; }
+
+  .label { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .12em;
+           text-transform: uppercase; color: #7d879b; margin: 14px 0 7px; }
+  .chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+  .chip {
+    height: 26px; border-radius: 7px; cursor: pointer;
+    border: 2px solid rgba(255,255,255,.12); padding: 0; transition: transform .12s ease;
+  }
+  .chip:hover { transform: translateY(-1px); }
+  .chip.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(126,224,255,.5); }
+
+  .ctl { display: block; margin: 10px 0; }
+  .ctl > span { display: flex; justify-content: space-between; margin-bottom: 4px;
+                font-size: 12px; color: #c3cad8; }
+  .ctl b { font-weight: 600; color: #7ee0ff; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: #533afd; height: 18px; margin: 0; cursor: pointer; }
+
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .seg button, .btnrow button {
+    font: inherit; font-size: 12px; color: #c3cad8; padding: 7px 0; cursor: pointer;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px; transition: all .12s ease;
+  }
+  .seg button.on { background: rgba(83,58,253,.35); border-color: #533afd; color: #fff; }
+  .seg button:hover:not(.on), .btnrow button:hover { background: rgba(255,255,255,.12); color: #fff; }
+  .btnrow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 15px; }
+  .btnrow button.primary { background: #533afd; border-color: #533afd; color: #fff; }
+  .btnrow button.primary:hover { background: #6b52ff; }
+  .checkline { display: flex; align-items: center; gap: 8px; margin-top: 12px;
+               font-size: 12px; color: #c3cad8; cursor: pointer; }
+  .checkline input { accent-color: #533afd; cursor: pointer; }
+  kbd { font: 10.5px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.09);
+        border-radius: 4px; padding: 1px 5px; color: #aab4c8; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="vignette"></div>
+<div id="hint">drag to attract &nbsp;·&nbsp; <kbd>R</kbd> randomize &nbsp;·&nbsp; <kbd>S</kbd> save png &nbsp;·&nbsp; <kbd>C</kbd> clear &nbsp;·&nbsp; <kbd>space</kbd> pause</div>
+
+<div class="panel" id="panel">
+  <div class="panel-head">
+    <div class="panel-title">NEBULA <em>BRUSH</em></div>
+    <button id="collapse" title="collapse">–</button>
+  </div>
+  <div class="panel-body">
+    <span class="label">Palette</span>
+    <div class="chips" id="chips"></div>
+
+    <span class="label">Physics</span>
+    <label class="ctl"><span>Particles <b id="v-count"></b></span>
+      <input type="range" id="in-count" min="200" max="4000" step="50"></label>
+    <label class="ctl"><span>Flow scale <b id="v-scale"></b></span>
+      <input type="range" id="in-scale" min="0.0005" max="0.006" step="0.0001"></label>
+    <label class="ctl"><span>Speed <b id="v-speed"></b></span>
+      <input type="range" id="in-speed" min="0.4" max="4" step="0.1"></label>
+    <label class="ctl"><span>Trail fade <b id="v-fade"></b></span>
+      <input type="range" id="in-fade" min="0.008" max="0.2" step="0.002"></label>
+    <label class="ctl"><span>Stroke width <b id="v-width"></b></span>
+      <input type="range" id="in-width" min="0.4" max="2.5" step="0.1"></label>
+
+    <span class="label">Pointer force</span>
+    <div class="seg" id="forceseg">
+      <button data-mode="attract" class="on">Attract</button>
+      <button data-mode="repel">Repel</button>
+    </div>
+
+    <label class="checkline"><input type="checkbox" id="in-drift" checked>
+      Wandering drift when idle</label>
+
+    <div class="btnrow">
+      <button class="primary" id="btn-random">Random</button>
+      <button id="btn-clear">Clear</button>
+      <button id="btn-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#060810'; ctx.fillRect(0, 0, W, H);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------------------------------------------------------------- noise
+  const noise = (() => {
+    const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+    const lerp = (a, b, t) => a + (b - a) * t;
+    function hash(x, y, z) {
+      let h = Math.imul(x, 0x8da6b343) ^ Math.imul(y, 0xd8163841) ^ Math.imul(z, 0xcb1ab31f);
+      h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+      h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+      h ^= h >>> 15;
+      return (h >>> 0) / 4294967295;
+    }
+    return (x, y, z) => {
+      const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+      const u = fade(x - xi), v = fade(y - yi), w = fade(z - zi);
+      return lerp(
+        lerp(lerp(hash(xi,yi,zi),   hash(xi+1,yi,zi),   u),
+             lerp(hash(xi,yi+1,zi), hash(xi+1,yi+1,zi), u), v),
+        lerp(lerp(hash(xi,yi,zi+1),   hash(xi+1,yi,zi+1),   u),
+             lerp(hash(xi,yi+1,zi+1), hash(xi+1,yi+1,zi+1), u), v),
+        w);
+    };
+  })();
+
+  // ---------------------------------------------------------------- state
+  const PALETTES = {
+    Aurora: ['#00f5d4', '#00bbf9', '#9b5de5', '#f15bb5', '#fee440'],
+    Bloom:  ['#f72585', '#7209b7', '#3a0ca3', '#4361ee', '#4cc9f0'],
+    Ember:  ['#ff6b35', '#f7c548', '#ff2e63', '#ff9f1c', '#ffd23f'],
+    Abyss:  ['#05e0ff', '#4cc9f0', '#4895ef', '#00b4d8', '#90e0ef'],
+    Candy:  ['#ff99c8', '#fcf6bd', '#a9def9', '#e4c1f9', '#dea5a4'],
+  };
+
+  const params = { count: 1600, scale: 0.0022, speed: 1.8, fade: 0.045, width: 1 };
+  let paletteName = 'Aurora';
+  let palette = PALETTES[paletteName];
+  let particles = [];
+  let time = Math.random() * 500;
+  let ox = Math.random() * 4096, oy = Math.random() * 4096; // field offset = "seed"
+  let paused = false;
+  let lastInteract = 0;
+
+  const pointer = { x: 0, y: 0, down: false, repel: false };
+  const drift = { x: 0, y: 0, tx: 0, ty: 0, next: 0, on: true };
+
+  function spawn(p) {
+    p.x = Math.random() * W; p.y = Math.random() * H;
+    p.px = p.x; p.py = p.y;
+    p.color = (Math.random() * palette.length) | 0;
+    p.width = params.width * (0.5 + Math.random());
+    p.speedMul = 0.55 + Math.random() * 0.9;
+    p.life = 120 + Math.random() * 380;
+  }
+
+  function setCount(n) {
+    while (particles.length < n) { const p = {}; spawn(p); particles.push(p); }
+    particles.length = n;
+  }
+  setCount(params.count);
+
+  function clearCanvas() {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#060810'; ctx.fillRect(0, 0, W, H);
+  }
+
+  // ---------------------------------------------------------------- loop
+  function fieldAngle(x, y) {
+    return noise(x * params.scale + ox, y * params.scale + oy, time) * Math.PI * 4;
+  }
+
+  function step(dt) {
+    time += 0.0035 * dt;
+
+    // trail fade
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = `rgba(6,8,16,${params.fade})`;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.7;
+    ctx.lineCap = 'round';
+
+    // pick the active attractor: the user's pointer, or a wandering drift point
+    let fx = 0, fy = 0, forceOn = false;
+    if (pointer.down) {
+      fx = pointer.x; fy = pointer.y; forceOn = true;
+    } else if (drift.on && performance.now() - lastInteract > 2500) {
+      const now = performance.now();
+      if (now > drift.next || Math.hypot(drift.tx - drift.x, drift.ty - drift.y) < 20) {
+        drift.tx = W * (0.15 + Math.random() * 0.7);
+        drift.ty = H * (0.15 + Math.random() * 0.7);
+        drift.next = now + 3000 + Math.random() * 4000;
+      }
+      drift.x += (drift.tx - drift.x) * 0.012 * dt;
+      drift.y += (drift.ty - drift.y) * 0.012 * dt;
+      fx = drift.x; fy = drift.y; forceOn = true;
+    }
+
+    for (const p of particles) {
+      const a = fieldAngle(p.x, p.y);
+      let vx = Math.cos(a), vy = Math.sin(a);
+
+      if (forceOn) {
+        const dx = fx - p.x, dy = fy - p.y;
+        const d2 = dx * dx + dy * dy;
+        const d = Math.sqrt(d2) + 1e-4;
+        const s = Math.min(1.6, 26000 / (d2 + 3000)) * (pointer.down && pointer.repel ? -1 : 1);
+        vx += (dx / d) * s * 2.2;
+        vy += (dy / d) * s * 2.2;
+        const m = Math.hypot(vx, vy) || 1; vx /= m; vy /= m;
+      }
+
+      p.px = p.x; p.py = p.y;
+      const v = params.speed * p.speedMul * dt;
+      p.x += vx * v; p.y += vy * v;
+      p.life -= dt;
+
+      if (p.life <= 0 || p.x < -4 || p.x > W + 4 || p.y < -4 || p.y > H + 4) { spawn(p); continue; }
+
+      ctx.strokeStyle = palette[p.color];
+      ctx.lineWidth = p.width;
+      ctx.beginPath();
+      ctx.moveTo(p.px, p.py);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - last) / 16.667, 3);
+    last = now;
+    if (!paused) step(dt);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---------------------------------------------------------------- input
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    pointer.down = true; pointer.x = e.clientX; pointer.y = e.clientY;
+    lastInteract = performance.now();
+    dismissHint();
+  });
+  canvas.addEventListener('pointermove', e => {
+    pointer.x = e.clientX; pointer.y = e.clientY;
+    lastInteract = performance.now();
+  });
+  canvas.addEventListener('pointerup', () => { pointer.down = false; });
+  canvas.addEventListener('pointercancel', () => { pointer.down = false; });
+
+  // ---------------------------------------------------------------- ui
+  const $ = id => document.getElementById(id);
+
+  function bind(sliderId, valueId, format, apply) {
+    const input = $(sliderId), label = $(valueId);
+    const update = () => { label.textContent = format(+input.value); apply(+input.value); };
+    input.addEventListener('input', update);
+    input.value = params[sliderId.replace('in-', '')];
+    label.textContent = format(+input.value);
+    return { input, refresh: () => { input.value = params[sliderId.replace('in-', '')]; label.textContent = format(+input.value); } };
+  }
+
+  const ctls = {
+    count: bind('in-count', 'v-count', v => v.toFixed(0), v => { params.count = v; setCount(v); }),
+    scale: bind('in-scale', 'v-scale', v => (v * 1000).toFixed(1), v => { params.scale = v; }),
+    speed: bind('in-speed', 'v-speed', v => v.toFixed(1), v => { params.speed = v; }),
+    fade:  bind('in-fade',  'v-fade',  v => v.toFixed(3), v => { params.fade = v; }),
+    width: bind('in-width', 'v-width', v => v.toFixed(1), v => { params.width = v; }),
+  };
+
+  // palette chips
+  const chipsEl = $('chips');
+  for (const name of Object.keys(PALETTES)) {
+    const btn = document.createElement('button');
+    btn.className = 'chip' + (name === paletteName ? ' active' : '');
+    btn.title = name;
+    btn.style.background = `linear-gradient(135deg, ${PALETTES[name].join(', ')})`;
+    btn.addEventListener('click', () => {
+      paletteName = name; palette = PALETTES[name];
+      chipsEl.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      particles.forEach(p => { p.color = (Math.random() * palette.length) | 0; });
+    });
+    chipsEl.appendChild(btn);
+  }
+
+  // force mode
+  $('forceseg').querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      $('forceseg').querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      pointer.repel = b.dataset.mode === 'repel';
+    });
+  });
+
+  $('in-drift').addEventListener('change', e => { drift.on = e.target.checked; });
+  $('collapse').addEventListener('click', () => {
+    $('panel').classList.toggle('collapsed');
+    $('collapse').textContent = $('panel').classList.contains('collapsed') ? '+' : '–';
+  });
+
+  function randomize() {
+    const names = Object.keys(PALETTES);
+    const name = names[(Math.random() * names.length) | 0];
+    paletteName = name; palette = PALETTES[name];
+    chipsEl.querySelectorAll('.chip').forEach((c, i) => c.classList.toggle('active', names[i] === name));
+    particles.forEach(p => { p.color = (Math.random() * palette.length) | 0; });
+
+    params.scale = +(0.001 + Math.random() * 0.004).toFixed(4);
+    params.speed = +(0.9 + Math.random() * 2.1).toFixed(1);
+    params.fade  = +(0.02 + Math.random() * 0.07).toFixed(3);
+    params.width = +(0.6 + Math.random() * 1.3).toFixed(1);
+    params.count = 600 + ((Math.random() * 30) | 0) * 100;
+    for (const c of Object.values(ctls)) c.refresh();
+    setCount(params.count);
+
+    ox = Math.random() * 4096; oy = Math.random() * 4096;
+    clearCanvas();
+    particles.forEach(spawn);
+  }
+
+  function savePNG() {
+    const a = document.createElement('a');
+    a.download = `nebula-${Date.now()}.png`;
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  }
+
+  $('btn-random').addEventListener('click', randomize);
+  $('btn-clear').addEventListener('click', clearCanvas);
+  $('btn-save').addEventListener('click', savePNG);
+
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'r' || e.key === 'R') randomize();
+    else if (e.key === 's' || e.key === 'S') savePNG();
+    else if (e.key === 'c' || e.key === 'C') clearCanvas();
+    else if (e.key === ' ') { e.preventDefault(); paused = !paused; }
+  });
+
+  // hint dismiss
+  const hint = $('hint');
+  function dismissHint() { hint.classList.add('gone'); }
+  setTimeout(dismissHint, 9000);
+})();
+</script>
+</body>
+</html>
