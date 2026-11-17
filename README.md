@@ -6,7 +6,7 @@ like a brush herding a nebula across the canvas.
 
 ## Run
 
-Open `nebula-brush.html` in any browser. No build step, no dependencies.
+Open `index.html` in any browser. No build step, no dependencies.
 
 ## Controls
 
